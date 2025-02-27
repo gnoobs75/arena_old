@@ -89,12 +89,16 @@ let selectedTarget = null; // For spells targeting a champion
 
 let responseState = null; // Tracks response opportunities { player, trigger, data }
 let hoveredCard = null; // Card currently being hovered over for popup
+let responseYesButton, responseNoButton; // New buttons for Yes/No
+let responseDecision = null; // Tracks "yes" or "no"
 
 // Grid dimensions (global scope)
 let gridSize = 10; // Size of game grid (10x10)
 let cellSize = 60; // Pixel size of each grid cell
 let gridWidth = gridSize * cellSize; // Total grid width
 let gridHeight = gridSize * cellSize; // Total grid height
+
+
 
 // Preload Function - Loads card data and images before setup
 function preload() {
@@ -168,6 +172,14 @@ function setup() {
   undoButton = createButton('Undo');
   undoButton.hide();
   undoButton.mousePressed(undoLastAction);
+  
+  responseYesButton = createButton('Yes');
+  responseYesButton.hide();
+  responseYesButton.mousePressed(() => responseDecision = 'yes');
+
+  responseNoButton = createButton('No');
+  responseNoButton.hide();
+  responseNoButton.mousePressed(() => responseNoButtonClicked());
 }
 
 // Draw Function - Main Game Loop
@@ -281,6 +293,8 @@ function drawAnnouncement() {
 
 // Displays response prompt for the current player
 function drawResponsePrompt() {
+  if (!responseState || responseDecision === 'no') return;
+
   fill(255, 255, 255, 200);
   stroke(0);
   strokeWeight(2);
@@ -290,6 +304,45 @@ function drawResponsePrompt() {
   textSize(24);
   textAlign(CENTER, CENTER);
   text(`Player ${responseState.player} - Response?`, width / 2, height / 2 - 60);
+
+  // Position Yes/No buttons
+  responseYesButton.position(width / 2 - 100, height / 2 - 20);
+  responseYesButton.size(80, 40);
+  responseYesButton.show();
+
+  responseNoButton.position(width / 2 + 20, height / 2 - 20);
+  responseNoButton.size(80, 40);
+  responseNoButton.show();
+
+  // If "Yes" clicked, show cast prompt
+  if (responseDecision === 'yes') {
+    drawCastResponsePrompt();
+  }
+}
+
+function drawCastResponsePrompt() {
+  fill(255, 255, 255, 200);
+  stroke(0);
+  strokeWeight(2);
+  rect(width / 2 - 200, height / 2 + 20, 400, 60, 10);
+  fill(0);
+  noStroke();
+  textSize(20);
+  textAlign(CENTER, CENTER);
+  text(`Player ${responseState.player} - Cast Response Card Now`, width / 2, height / 2 + 50);
+
+  responseYesButton.hide();
+  responseNoButton.hide();
+}
+
+function responseNoButtonClicked() {
+  responseDecision = "no";
+  responseYesButton.hide();
+  responseNoButton.hide();
+  currentPlayer = originalPlayer === 1 ? 2 : 1; // Switch to next player
+  originalPlayer = currentPlayer;
+  responseState = null;
+  startTurn(); // Resume turn cycle
 }
 
 // Renders the initial splash screen
@@ -1070,10 +1123,32 @@ function getTaunt(attacker, defender) {
 
 // Handles game interactions (movement, attacks, card play)
 function handleGameClick() {
-  if (responseState) { // Handle response card casting
-    let cards = responseState.player === 1 ? player1Cards : player2Cards;
-    let discard = responseState.player === 1 ? player1Discard : player2Discard;
-    handlePlayClick(cards, discard, responseState.player === 1 ? 50 : 950, gridStartY);
+  if (responseState) {
+    if (responseDecision === 'yes') {
+      let cards = responseState.player === 1 ? player1Cards : player2Cards;
+      let discard = responseState.player === 1 ? player1Discard : player2Discard;
+      let mana = responseState.player === 1 ? player1Mana : player2Mana;
+
+      let validResponses = cards.filter(c => 
+        c.type === 'Response' && 
+        c.trigger === responseState.trigger && 
+        mana >= c.cost &&
+        (c.name !== "Natures Wrath" || responseState.data.beast.damageTakenThisTurn > 0)
+      );
+
+      if (validResponses.length > 0) {
+        handlePlayClick(cards, discard, responseState.player === 1 ? 50 : 950, gridStartY);
+        if (!cards.includes(hoveredCard)) { // Card was cast
+          responseDecision = null;
+          responseYesButton.hide();
+          responseNoButton.hide();
+          currentPlayer = originalPlayer === 1 ? 2 : 1;
+          originalPlayer = currentPlayer;
+          responseState = null;
+          startTurn();
+        }
+      }
+    }
     return;
   }
 
@@ -1089,7 +1164,7 @@ function handleGameClick() {
 
   // Handle targeting for spells
   if (targetingSpell) {
-    if (targetingDirections.length > 0) { // Directional targeting
+    if (targetingDirections.length > 0) {
       let [cx, cy] = targetingSpell.caster.position;
       for (let dir of targetingDirections) {
         let [dx, dy] = dir;
@@ -1100,11 +1175,8 @@ function handleGameClick() {
           if (tx === gridX && ty === gridY) {
             selectedDirection = [dx, dy];
             castCard(targetingSpell.card, targetingSpell.caster, null, selectedDirection);
-            if (currentPlayer === 1) {
-              player1Mana -= targetingSpell.card.cost;
-            } else {
-              player2Mana -= targetingSpell.card.cost;
-            }
+            if (currentPlayer === 1) player1Mana -= targetingSpell.card.cost;
+            else player2Mana -= targetingSpell.card.cost;
             let cards = currentPlayer === 1 ? player1Cards : player2Cards;
             let discard = currentPlayer === 1 ? player1Discard : player2Discard;
             cards.shift();
@@ -1116,15 +1188,12 @@ function handleGameClick() {
           }
         }
       }
-    } else if (targetingPosition) { // Position targeting (e.g., AOE)
+    } else if (targetingPosition) {
       if (gridX >= 0 && gridX < gridSize && gridY >= 0 && gridY < gridSize) {
         selectedTarget = [gridX, gridY];
         castCard(targetingSpell.card, targetingSpell.caster, selectedTarget);
-        if (currentPlayer === 1) {
-          player1Mana -= targetingSpell.card.cost;
-        } else {
-          player2Mana -= targetingSpell.card.cost;
-        }
+        if (currentPlayer === 1) player1Mana -= targetingSpell.card.cost;
+        else player2Mana -= targetingSpell.card.cost;
         let cards = currentPlayer === 1 ? player1Cards : player2Cards;
         let discard = currentPlayer === 1 ? player1Discard : player2Discard;
         cards.shift();
@@ -1134,17 +1203,14 @@ function handleGameClick() {
         selectedTarget = null;
         return;
       }
-    } else { // Champion targeting
+    } else {
       let allChamps = player1Champions.concat(player2Champions);
       for (let champ of allChamps) {
         if (champ.position && champ.position[0] === gridX && champ.position[1] === gridY) {
           selectedTarget = champ;
           castCard(targetingSpell.card, targetingSpell.caster, selectedTarget);
-          if (currentPlayer === 1) {
-            player1Mana -= targetingSpell.card.cost;
-          } else {
-            player2Mana -= targetingSpell.card.cost;
-          }
+          if (currentPlayer === 1) player1Mana -= targetingSpell.card.cost;
+          else player2Mana -= targetingSpell.card.cost;
           let cards = currentPlayer === 1 ? player1Cards : player2Cards;
           let discard = currentPlayer === 1 ? player1Discard : player2Discard;
           cards.shift();
@@ -1169,10 +1235,11 @@ function handleGameClick() {
           selectedChampion = null;
           validMoves = [];
           validRange = [];
-        } else if (!champ.hasMoved || !champ.hasAttacked) {
+        } else if (champ.moveCount < champ.maxMoves || champ.attackCount < champ.maxAttacks) {
           selectedChampion = champ;
-          validMoves = champ.hasMoved ? [] : getValidMoves(champ);
-          validRange = champ.hasAttacked ? [] : getValidRange(champ);
+          validMoves = champ.moveCount < champ.maxMoves ? getValidMoves(champ) : [];
+          validRange = champ.attackCount < champ.maxAttacks ? getValidRange(champ) : [];
+          console.log(`${champ.name} selected: moveCount=${champ.moveCount}, maxMoves=${champ.maxMoves}, attackCount=${champ.attackCount}, maxAttacks=${champ.maxAttacks}`);
         }
         return;
       }
@@ -1184,43 +1251,37 @@ function handleGameClick() {
     if (validMoves.some(([vx, vy]) => vx === gridX && vy === gridY) && !isOccupied(gridX, gridY)) {
       let prevPos = [...selectedChampion.position];
       selectedChampion.position = [gridX, gridY];
-      selectedChampion.hasMoved = true;
+      selectedChampion.moveCount += 1;
+      selectedChampion.hasMoved = (selectedChampion.moveCount >= selectedChampion.maxMoves);
       lastAction = { type: 'move', champ: selectedChampion, prevPos };
+      console.log(`${selectedChampion.name} moved to [${gridX}, ${gridY}]: moveCount=${selectedChampion.moveCount}, maxMoves=${selectedChampion.maxMoves}`);
 
-      // Check for Bear Trap or Pit of Despair trigger
+      // Trigger response check
       let opponentChampions = currentPlayer === 1 ? player2Champions : player1Champions;
       let opponentPlayer = currentPlayer === 1 ? 2 : 1;
       let rangers = opponentChampions.filter(champ => champ.name === 'Ranger' && champ.position);
-      let wizards = opponentChampions.filter(champ => champ.name === 'DarkWizard' && champ.position);
       for (let ranger of rangers) {
         if (isInMeleeRange(selectedChampion.position, ranger.position)) {
-          originalPlayer = currentPlayer;
-          currentPlayer = opponentPlayer;
-          responseState = {
-            player: opponentPlayer,
-            trigger: 'move',
-            data: { mover: selectedChampion, position: selectedChampion.position }
-          };
-          console.log(`Bear Trap opportunity for Player ${opponentPlayer}`);
-          break;
-        }
-      }
-      for (let wizard of wizards) {
-        if (isInMeleeRange(selectedChampion.position, wizard.position)) {
-          originalPlayer = currentPlayer;
-          currentPlayer = opponentPlayer;
-          responseState = {
-            player: opponentPlayer,
-            trigger: 'move',
-            data: { mover: selectedChampion, position: selectedChampion.position }
-          };
-          console.log(`Pit of Despair opportunity for Player ${opponentPlayer}`);
-          break;
+          let opponentMana = opponentPlayer === 1 ? player1Mana : player2Mana;
+          let opponentCards = opponentPlayer === 1 ? player1Cards : player2Cards;
+          if (opponentCards.some(c => c.name === 'Bear Trap' && opponentMana >= c.cost)) {
+            originalPlayer = currentPlayer;
+            currentPlayer = opponentPlayer;
+            responseState = {
+              player: opponentPlayer,
+              trigger: 'move',
+              data: { mover: selectedChampion, position: selectedChampion.position }
+            };
+            responseDecision = null;
+            console.log(`Bear Trap opportunity for Player ${opponentPlayer}`);
+            break;
+          }
         }
       }
 
-      validMoves = [];
-      validRange = selectedChampion.hasAttacked ? [] : getValidRange(selectedChampion);
+      validMoves = selectedChampion.moveCount < selectedChampion.maxMoves ? getValidMoves(selectedChampion) : [];
+      validRange = selectedChampion.attackCount < selectedChampion.maxAttacks ? getValidRange(selectedChampion) : [];
+      console.log(`After move: validMoves.length=${validMoves.length}`);
       return;
     }
 
@@ -1235,10 +1296,11 @@ function handleGameClick() {
           console.log(`${enemy.name}'s Earth Armor reduced damage by 1`);
         }
         applyDamage(enemy, damage, selectedChampion);
-        selectedChampion.hasAttacked = true;
+        selectedChampion.attackCount += 1;
+        selectedChampion.hasAttacked = (selectedChampion.attackCount >= selectedChampion.maxAttacks);
         lastAction = { type: 'attack', champ: selectedChampion, target: enemy, damage };
         console.log(`${selectedChampion.name} attacked ${enemy.name} for ${damage} damage. ${enemy.name} HP: ${enemy.life}`);
-        
+
         let tauntText = getTaunt(selectedChampion, enemy);
         tauntBubble = {
           text: tauntText,
@@ -1249,23 +1311,23 @@ function handleGameClick() {
           fadeTime: 2000
         };
 
-        validMoves = selectedChampion.hasMoved ? [] : getValidMoves(selectedChampion);
-        validRange = [];
+        validMoves = selectedChampion.moveCount < selectedChampion.maxMoves ? getValidMoves(selectedChampion) : [];
+        validRange = selectedChampion.attackCount < selectedChampion.maxAttacks ? getValidRange(selectedChampion) : [];
         return;
       }
     }
   }
 
   // Handle deck clicks
-  handleDeckClick(player1Deck, player1Cards, 50, gridBottom + 20); // P1 deck at (50, 690)
-  handleDeckClick(player2Deck, player2Cards, 950, offsetY - 10); // P2 deck at (950, 40)
+  handleDeckClick(player1Deck, player1Cards, 50, gridBottom + 20);
+  handleDeckClick(player2Deck, player2Cards, 950, offsetY - 10);
 
   // Handle popup click for casting
   if (hoveredCard) {
     let popupX = hoveredCard.player === 1 ? 200 : 800;
     let popupY = hoveredCard.y;
-    let buttonX = popupX + 90; // Center of 280 width
-    let buttonY = popupY + 370; // Bottom of 420 height - 10 padding
+    let buttonX = popupX + 90;
+    let buttonY = popupY + 370;
     if (isMouseOver(buttonX, buttonY, 100, 40)) {
       let cards = hoveredCard.player === 1 ? player1Cards : player2Cards;
       let discard = hoveredCard.player === 1 ? player1Discard : player2Discard;
@@ -1288,11 +1350,8 @@ function handleGameClick() {
             announcement = { text: "Select a target position", startTime: millis(), duration: 2000, fadeTime: 1000 };
           } else {
             castCard(card, hoveredCard.caster);
-            if (hoveredCard.player === 1) {
-              player1Mana -= card.cost;
-            } else {
-              player2Mana -= card.cost;
-            }
+            if (hoveredCard.player === 1) player1Mana -= card.cost;
+            else player2Mana -= card.cost;
             cards.splice(index, 1);
             discard.push(card);
             console.log(`${card.name} cast by ${hoveredCard.caster.name}. Mana left: ${currentMana - card.cost}`);
@@ -1300,22 +1359,16 @@ function handleGameClick() {
         } else if (card.type === 'Equipment' && !responseState) {
           hoveredCard.caster.equipped = card;
           if (card.name === 'Repentance' || card.name === 'Intimidation' || card.name === 'Combat Medic') card.charges = 3;
-          if (hoveredCard.player === 1) {
-            player1Mana -= card.cost;
-          } else {
-            player2Mana -= card.cost;
-          }
+          if (hoveredCard.player === 1) player1Mana -= card.cost;
+          else player2Mana -= card.cost;
           cards.splice(index, 1);
           console.log(`${card.name} equipped by ${hoveredCard.caster.name}. Mana left: ${currentMana - card.cost}`);
         } else if (responseState && responseState.player === hoveredCard.player && card.type === 'Response') {
           if (card.name === 'Bear Trap' && responseState.trigger === 'move') {
             let mover = responseState.data.mover;
             castCard(card, hoveredCard.caster, mover);
-            if (hoveredCard.player === 1) {
-              player1Mana -= card.cost;
-            } else {
-              player2Mana -= card.cost;
-            }
+            if (hoveredCard.player === 1) player1Mana -= card.cost;
+            else player2Mana -= card.cost;
             cards.splice(index, 1);
             discard.push(card);
             announcement = { text: "Response!", startTime: millis(), duration: 2000, fadeTime: 1000 };
@@ -1324,11 +1377,8 @@ function handleGameClick() {
             console.log(`${card.name} cast by ${hoveredCard.caster.name}. Mana left: ${currentMana - card.cost}`);
           } else if (card.name === 'Pit of Despair' && responseState.trigger === 'move') {
             castCard(card, hoveredCard.caster, responseState.data.mover);
-            if (hoveredCard.player === 1) {
-              player1Mana -= card.cost;
-            } else {
-              player2Mana -= card.cost;
-            }
+            if (hoveredCard.player === 1) player1Mana -= card.cost;
+            else player2Mana -= card.cost;
             cards.splice(index, 1);
             discard.push(card);
             announcement = { text: "Response!", startTime: millis(), duration: 2000, fadeTime: 1000 };
@@ -1336,13 +1386,13 @@ function handleGameClick() {
             responseState = null;
           }
         }
-        hoveredCard = null; // Clear popup after casting
+        hoveredCard = null;
       }
     }
   }
 
   // Update hovered card
-  hoveredCard = null; // Reset each frame
+  hoveredCard = null;
   checkCardHover(player1Cards, 50, gridStartY, 1);
   checkCardHover(player2Cards, 950, gridStartY, 2);
 }
@@ -1457,6 +1507,10 @@ function startTurn() {
     champ.hasMoved = false;
     champ.hasAttacked = false;
     champ.hasCast = false;
+    champ.moveCount = 0;
+    champ.maxMoves = 1;
+    champ.attackCount = 0;
+    champ.maxAttacks = 1;
     champ.tempEffects = champ.tempEffects || {};
     if (champ.tempEffects.thisTurn) {
       if (champ.tempEffects.thisTurn.power) champ.power -= champ.tempEffects.thisTurn.power;
@@ -1473,6 +1527,10 @@ function startTurn() {
     champ.hasMoved = false;
     champ.hasAttacked = false;
     champ.hasCast = false;
+    champ.moveCount = 0;
+    champ.maxMoves = 1;
+    champ.attackCount = 0;
+    champ.maxAttacks = 1;
     champ.tempEffects = champ.tempEffects || {};
     if (champ.tempEffects.thisTurn) {
       if (champ.tempEffects.thisTurn.power) champ.power -= champ.tempEffects.thisTurn.power;
@@ -1521,10 +1579,9 @@ function endTurn() {
   selectedDirection = null;
   targetingPosition = null;
   selectedTarget = null;
-  responseState = null;
-  currentPlayer = originalPlayer; // Restore original player if interrupted
-
-  // Discard excess cards if hand exceeds 7
+  responseDecision = null; // Reset decision
+  
+  // Handle excess cards
   if (currentPlayer === 1 && player1Cards.length > 7) {
     let excess = player1Cards.length - 7;
     player1Discard.push(...player1Cards.splice(0, excess));
@@ -1535,7 +1592,28 @@ function endTurn() {
     console.log(`Player 2 discarded ${excess} cards. Hand: ${player2Cards.length}, Discard: ${player2Discard.length}`);
   }
 
-  currentPlayer = currentPlayer === 1 ? 2 : 1;
+  // Check for "Nature's Wrath" response
+  let opponentPlayer = currentPlayer === 1 ? 2 : 1;
+  let opponentCards = opponentPlayer === 1 ? player1Cards : player2Cards;
+  let opponentMana = opponentPlayer === 1 ? player1Mana : player2Mana;
+  let beasts = (opponentPlayer === 1 ? player1Champions : player2Champions).filter(champ => champ.name === 'Beast' && champ.position);
+  
+  for (let beast of beasts) {
+    if (beast.damageTakenThisTurn > 0 && opponentCards.some(c => c.name === "Natures Wrath" && opponentMana >= c.cost)) {
+      originalPlayer = currentPlayer; // Store current player
+      currentPlayer = opponentPlayer; // Switch to responding player
+      responseState = {
+        player: opponentPlayer,
+        trigger: 'endTurn',
+        data: { beast: beast }
+      };
+      console.log(`Nature's Wrath opportunity for Player ${opponentPlayer}`);
+      return; // Pause here until response is resolved
+    }
+  }
+
+  // If no response, proceed with turn end
+  currentPlayer = opponentPlayer;
   originalPlayer = currentPlayer;
   startTurn();
 }
@@ -1659,734 +1737,168 @@ function castCard(card, caster, target = null, direction = null) {
 
   caster.tempEffects = caster.tempEffects || {};
 
-  if (card.character === 'Brute') {
-    if (card.name === 'Oblivious') { // Response: handled in applyDamage
-    } else if (card.name === 'Nap Time') {
-      caster.life = min(caster.life + 3, 20);
-      caster.hasAttacked = true;
-      console.log(`${caster.name} used Nap Time. Life: ${caster.life}`);
-    } else if (card.name === 'Friends Forever') {
-      let enemyCount = enemies.filter(e => e.position && isInRange(caster, e)).length;
-      caster.tempEffects.thisTurn = { power: enemyCount };
-      caster.power += enemyCount;
-      console.log(`${caster.name} gained ${enemyCount} power from Friends Forever`);
-    } else if (card.name === 'Tantrum') { // Response: handled in applyDamage
-    } else if (card.name === 'Heave' && target) {
-      let [tx, ty] = findEmptyPositionOverWall(caster, target, direction);
-      if (tx !== null) {
-        target.position = [tx, ty];
-        console.log(`${caster.name} heaved ${target.name} to [${tx}, ${ty}]`);
-      }
-    } else if (card.name === 'Ground Pound' && direction) {
-      let [dx, dy] = direction;
-      let [cx, cy] = caster.position;
-      let targets = [];
-      for (let i = 1; i <= gridSize; i++) {
-        let tx = cx + dx * i;
-        let ty = cy + dy * i;
-        if (tx < 0 || tx >= gridSize || ty < 0 || ty >= gridSize || gameBoard[ty][tx] === 'wall') break;
-        let hit = allChamps.find(champ => champ.position && champ.position[0] === tx && champ.position[1] === ty);
-        if (hit) targets.push(hit);
-      }
-      targets.forEach(t => applyDamage(t, 2, caster));
-      console.log(`${caster.name} used Ground Pound, hitting ${targets.length} champions`);
-    } else if (card.name === 'Big Hug' && target) {
-      target.tempEffects.untilNextTurn = { canMove: false };
-      console.log(`${caster.name} hugged ${target.name}, immobilizing them next turn`);
-    } else if (card.name === 'No Bullying' && target) {
-      let corners = [[1, 1], [1, 8], [8, 1], [8, 8]];
-      let newPos = corners.find(([x, y]) => !isOccupied(x, y) && gameBoard[y][x] === 'empty');
-      if (newPos) {
-        target.position = newPos;
-        console.log(`${caster.name} sent ${target.name} to corner ${newPos}`);
-      }
-    } else if (card.name === 'Endless Energy') {
-      caster.hasMoved = false;
-      caster.hasAttacked = false;
-      console.log(`${caster.name} gained extra move and attack`);
-    } else if (card.name === 'Encouragement' && target) {
-      target.tempEffects.thisTurn = { power: 2, range: 2, movement: 2 };
-      target.power += 2;
-      target.range += 2;
+  // Determine targets based on card.target
+  let targets = [];
+  if (card.target === "self") targets = [caster];
+  else if (card.target === "friendly" || card.target === "enemy") targets = target ? [target] : [];
+  else if (card.target === "direction" && direction) targets = getTargetsInDirection(caster, direction, card.range);
+  else if (card.target === "position" && target) targets = getAOETargets(target[0], target[1]);
+  else if (card.target === "none" && card.range === "global") targets = card.effect[0].scope === "friendlies" ? friendlies : enemies;
+
+  console.log(`Casting ${card.name} on targets: ${targets.map(t => t.name).join(', ')}`);
+
+  // Handle response-specific logic
+  if (card.type === "Response" && responseState) {
+    let mana = responseState.player === 1 ? player1Mana : player2Mana;
+    mana -= card.cost;
+    if (responseState.player === 1) player1Mana = mana;
+    else player2Mana = mana;
+    console.log(`${card.name} cast by ${caster.name} for ${card.cost} mana`);
+
+    if (card.name === 'Quick Instincts' && target.name === 'Beast') {
+      target.tempEffects.thisTurn = target.tempEffects.thisTurn || {};
+      target.tempEffects.thisTurn.movement = 2;
       target.movementSpeed += 2;
-      console.log(`${caster.name} encouraged ${target.name}, +2 to all stats`);
-    } else if (card.name === 'Shove Off' && target) {
-      let [dx, dy] = getDirectionToWall(caster, target);
-      let [tx, ty] = pushUntilWall(target, dx, dy);
-      target.position = [tx, ty];
-      if (target.equipped) {
-        let discard = currentPlayer === 1 ? player2Discard : player1Discard;
-        discard.push(target.equipped);
-        target.equipped = null;
-      }
-      console.log(`${caster.name} shoved ${target.name} to [${tx}, ${ty}]`);
-    } else if (card.name === 'Enough is Enough') {
-      caster.tempEffects.thisTurn = { power: 2 };
-      caster.power += 2;
-      caster.hasAttacked = false;
-      console.log(`${caster.name} gained +2 power and extra attack`);
-    }
-  } else if (card.character === 'Ranger') {
-    if (card.name === 'Elusive') {
-      caster.hasMoved = false;
-      console.log(`${caster.name} gained extra movement phase`);
-    } else if (card.name === 'Swiftness') {
-      caster.tempEffects.thisTurn = { movement: 5, range: -5 };
-      caster.movementSpeed += 5;
-      caster.range -= 5;
-      console.log(`${caster.name} gained +5 movement, -5 range`);
-    } else if (card.name === 'Power Shot') {
-      caster.tempEffects.thisTurn = { power: 2, range: -2 };
-      caster.power += 2;
-      caster.range -= 2;
-      console.log(`${caster.name} gained +2 power, -2 range`);
-    } else if (card.name === 'Bear Trap') { // Response: handled in movement
-    } else if (card.name === 'Resourceful') {
-      let discard = currentPlayer === 1 ? player1Discard : player2Discard;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      let options = discard.filter(c => c.character === 'Ranger' && c.cost <= 1);
-      if (options.length > 0) {
-        let cardToRetrieve = options[Math.floor(Math.random() * options.length)];
-        hand.push(cardToRetrieve);
-        discard.splice(discard.indexOf(cardToRetrieve), 1);
-        console.log(`${caster.name} retrieved ${cardToRetrieve.name} from discard`);
-      }
-    } else if (card.name === 'Rain of Arrows' && target) {
-      let [tx, ty] = target;
-      let hits = getAOETargets(tx, ty);
-      distributeDamageRandomly(hits, 4);
-      console.log(`${caster.name} fired Rain of Arrows, distributing 4 damage`);
-    } else if (card.name === 'Multi-Shot') {
-      enemies.filter(e => e.position && isInRange(caster, e)).forEach(e => applyDamage(e, 2, caster));
-      console.log(`${caster.name} used Multi-Shot`);
-    } else if (card.name === 'Rapid Fire') {
-      let deck = currentPlayer === 1 ? player1Deck : player2Deck;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      let drawn = deck.splice(0, 3);
-      hand.push(...drawn);
-      console.log(`${caster.name} drew ${drawn.map(c => c.name).join(', ')}`);
-      // Free Ranger card play not fully implemented due to UI limitations
-    } else if (card.name === 'Leech') {
-      caster.tempEffects.thisTurn = { leech: true };
-      console.log(`${caster.name} activated Leech`);
-    } else if (card.name === 'Focus Shot') {
-      caster.hasMoved = true;
-      caster.tempEffects.thisTurn = { power: 3 };
-      caster.power += 3;
-      console.log(`${caster.name} used Focus Shot, +3 power`);
-    } else if (card.name === 'Two for One') {
-      caster.tempEffects.thisTurn = { power: 2 };
-      caster.power += 2;
-      caster.hasAttacked = false;
-      console.log(`${caster.name} gained +2 power and extra attack`);
-    } else if (card.name === 'From the Sky') {
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      let discard = currentPlayer === 1 ? player1Discard : player2Discard;
-      let count = hand.length - 1; // Exclude this card
-      discard.push(...hand.splice(0, count));
-      for (let i = 0; i < count; i++) {
-        let enemy = enemies[Math.floor(Math.random() * enemies.length)];
-        if (enemy.position) applyDamage(enemy, 2, caster);
-      }
-      console.log(`${caster.name} discarded ${count} cards, dealt ${count * 2} damage`);
-    }
-  } else if (card.character === 'Beast') {
-    if (card.name === 'Quick Instincts') { // Response: handled in applyDamage
-    } else if (card.name === 'Natures Wrath') { // Response: handled in endTurn
-    } else if (card.name === 'Bear Tank') { // Response: handled in applyDamage
-    } else if (card.name === 'Elk Restoration') {
-      caster.tempEffects.thisTurn = { range: 3, elkRestoration: true };
-      caster.range += 3;
-      console.log(`${caster.name} gained +3 range with Elk Restoration`);
-    } else if (card.name === 'Ape Smash') {
-      caster.tempEffects.thisTurn = { power: 1, apeSmash: true };
-      caster.power += 1;
-      console.log(`${caster.name} gained +1 power with Ape Smash`);
-    } else if (card.name === 'Natures Gift') {
-      let deck = currentPlayer === 1 ? player1Deck : player2Deck;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      let bear = deck.find(c => c.name.includes('Bear'));
-      let elk = deck.find(c => c.name.includes('Elk'));
-      let ape = deck.find(c => c.name.includes('Ape'));
-      [bear, elk, ape].forEach(c => {
-        if (c) {
-          hand.push(c);
-          deck.splice(deck.indexOf(c), 1);
-          console.log(`${caster.name} retrieved ${c.name}`);
-        }
-      });
-    } else if (card.name === 'Natures Resilience') {
-      friendlies.forEach(c => {
-        c.tempEffects.untilNextTurn = { ...c.tempEffects.untilNextTurn, damageReduction: true };
-      });
-      console.log(`${caster.name} activated Nature's Resilience for all friendlies`);
-    } else if (card.name === 'Versatility') {
-      let stat = random(['power', 'range', 'movementSpeed']);
-      caster.tempEffects.thisTurn = { [stat]: 3 };
-      caster[stat] += 3;
-      console.log(`${caster.name} gained +3 ${stat}`);
-    } else if (card.name === 'Bear Intimidation') {
-      let [cx, cy] = caster.position;
-      let targets = getAOETargets(cx, cy, enemies);
-      targets.forEach(t => {
-        let moves = getValidMoves(t);
-        if (moves.length > 0) t.position = moves[0];
-      });
-      console.log(`${caster.name} intimidated ${targets.length} enemies`);
-    } else if (card.name === 'Ape Slam' && target) {
-      applyDamage(target, 3, caster);
-      target.tempEffects.untilNextTurn = { canMove: false, canAttack: false };
-      console.log(`${caster.name} slammed ${target.name}`);
-    } else if (card.name === 'Elk Infusion') {
-      friendlies.forEach(c => c.life = min(c.life + 3, 20));
-      console.log(`${caster.name} restored 3 health to all friendlies`);
-    }
-  } else if (card.character === 'Redeemer') {
-    if (card.name === 'Fast Heal' && target) {
-      target.life = min(target.life + 2, 20);
-      console.log(`${caster.name} healed ${target.name} for 2`);
-    } else if (card.name === 'Power Shield') { // Response: handled in applyDamage
-    } else if (card.name === 'Inspire' && target) {
-      target.tempEffects.thisTurn = { power: 1, range: 1, movement: 1 };
-      target.power += 1;
-      target.range += 1;
-      target.movementSpeed += 1;
-      console.log(`${caster.name} inspired ${target.name}`);
-    } else if (card.name === 'Calming' && target) {
-      target.tempEffects.untilNextTurn = { canCast: false, canAttack: false };
-      console.log(`${caster.name} calmed ${target.name}`);
-    } else if (card.name === 'Light Speed') {
-      friendlies.forEach(c => {
-        c.tempEffects.thisTurn = { movement: 3 };
-        c.movementSpeed += 3;
-      });
-      console.log(`${caster.name} granted +3 movement to all friendlies`);
-    } else if (card.name === 'Spirit Strike' && target) {
-      applyDamage(target, 2, caster);
-      caster.life = min(caster.life + 2, 20);
-      console.log(`${caster.name} struck ${target.name} and healed`);
-    } else if (card.name === 'Light Bomb' && target) {
-      let [tx, ty] = target;
-      let hits = getAOETargets(tx, ty);
-      hits.forEach(h => {
-        let [dx, dy] = getDirectionToWall(caster, h);
-        let [nx, ny] = pushUntilWall(h, dx, dy);
-        h.position = [nx, ny];
-      });
-      console.log(`${caster.name} knocked back ${hits.length} champions`);
-    } else if (card.name === 'Restoration' && target) {
-      target.life = min(target.life + 4, 20);
-      console.log(`${caster.name} restored 4 health to ${target.name}`);
-    } else if (card.name === 'Refocus') {
-      let discard = currentPlayer === 1 ? player1Discard : player2Discard;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      let oppDiscard = currentPlayer === 1 ? player2Discard : player1Discard;
-      let oppHand = currentPlayer === 1 ? player2Cards : player1Cards;
-      let toRetrieve = discard.splice(0, min(2, discard.length));
-      let oppRetrieve = oppDiscard.splice(0, min(2, oppDiscard.length));
-      hand.push(...toRetrieve);
-      oppHand.push(...oppRetrieve);
-      console.log(`${caster.name} refocused, retrieving ${toRetrieve.length} cards`);
-    } else if (card.name === 'Spirit Wall') {
-      // Implementation requires turn-start targeting; simplified here
-      console.log(`${caster.name} cast Spirit Wall (simplified)`);
-    } else if (card.name === 'Meditation') {
-      caster.hasMoved = true;
-      let deck = currentPlayer === 1 ? player1Deck : player2Deck;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      let cardToRetrieve = deck.find(c => c.character === 'Redeemer');
-      if (cardToRetrieve) {
-        hand.push(cardToRetrieve);
-        deck.splice(deck.indexOf(cardToRetrieve), 1);
-        console.log(`${caster.name} retrieved ${cardToRetrieve.name}`);
-      }
-    } else if (card.name === 'Resurrection') {
-      // Simplified: requires dead champion tracking
-      let deck = currentPlayer === 1 ? player1Deck : player2Deck;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      hand.push(...deck.splice(0, 2));
-      console.log(`${caster.name} drew 2 cards (Resurrection simplified)`);
-    }
-  } else if (card.character === 'Confessor') {
-    if (card.name === 'Denial') {
-      let opponent = currentPlayer === 1 ? player2Champions : player1Champions;
-      opponent.forEach(c => c.tempEffects.thisTurn = { canCast: false });
-      let deck = currentPlayer === 1 ? player1Deck : player2Deck;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      if (deck.length > 0) hand.push(deck.shift());
-      console.log(`${caster.name} denied opponent casting and drew a card`);
-    } else if (card.name === 'Secret Revealed') {
-      let oppHand = currentPlayer === 1 ? player2Cards : player1Cards;
-      if (oppHand.length > 0) {
-        let revealed = oppHand[Math.floor(Math.random() * oppHand.length)];
-        let targetChamp = enemies.find(c => c.name === revealed.character);
-        if (targetChamp) applyDamage(targetChamp, 2, caster);
-        console.log(`${caster.name} revealed ${revealed.name}, dealt 2 damage`);
-      }
-    } else if (card.name === 'Introspection') {
-      let deck = currentPlayer === 1 ? player1Deck : player2Deck;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      let discard = currentPlayer === 1 ? player1Discard : player2Discard;
-      hand.push(...deck.splice(0, 2));
-      discard.push(...hand.splice(0, 2));
-      console.log(`${caster.name} drew and discarded 2 cards`);
-    } else if (card.name === 'Hypocrite') { // Response: handled in draw
-    } else if (card.name === 'Blasphemy' && target) {
-      applyDamage(target, 2, caster);
-      card.canCastFromDiscard = true;
-      console.log(`${caster.name} cast Blasphemy on ${target.name}`);
-    } else if (card.name === 'Betrayal' && target) {
       let moves = getValidMoves(target);
       if (moves.length > 0) target.position = moves[0];
-      let range = getValidRange(target);
-      let hit = friendlies.find(f => range.some(([x, y]) => f.position && f.position[0] === x && f.position[1] === y));
-      if (hit) applyDamage(hit, target.power, target);
-      console.log(`${caster.name} betrayed ${target.name}`);
-    } else if (card.name === 'Life Payment') {
-      let oppHand = currentPlayer === 1 ? player2Cards : player1Cards;
-      caster.life = min(caster.life + oppHand.length, 20);
-      console.log(`${caster.name} restored ${oppHand.length} health`);
-    } else if (card.name === 'Atone') {
-      friendlies.forEach(c => c.life = min(c.life + 3, 20));
-      distributeDamageRandomly(enemies, 3);
-      card.canCastFromDiscard = true;
-      console.log(`${caster.name} cast Atone`);
-    } else if (card.name === 'Conspire') {
-      let oppDiscard = currentPlayer === 1 ? player2Discard : player1Discard;
-      let options = oppDiscard.filter(c => c.cost <= 1);
-      if (options.length > 0) {
-        let toCast = options[Math.floor(Math.random() * options.length)];
-        castCard(toCast, caster);
-        oppDiscard.splice(oppDiscard.indexOf(toCast), 1);
-        console.log(`${caster.name} conspired to cast ${toCast.name}`);
+      console.log(`${target.name} dodged with Quick Instincts to ${target.position}`);
+    } else if (card.name === 'Bear Tank' && responseState.data.source.name !== 'Beast') {
+      let beast = friendlies.find(c => c.name === 'Beast');
+      if (beast && isInLOS(beast, target)) {
+        let adj = findAdjacentEmpty(target.position);
+        if (adj) {
+          beast.position = adj;
+          beast.life -= 1;
+          console.log(`Beast tanked for ${target.name}, moved to ${adj}, took 1 damage`);
+        }
       }
-    } else if (card.name === 'Self-Hate') { // Response: handled in applyDamage
-    } else if (card.name === 'Evil Within') {
-      let deck = currentPlayer === 1 ? player1Deck : player2Deck;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      let discard = currentPlayer === 1 ? player1Discard : player2Discard;
-      let confessorCards = deck.filter(c => c.character === 'Confessor').slice(0, 2);
-      hand.push(...confessorCards);
-      confessorCards.forEach(c => deck.splice(deck.indexOf(c), 1));
-      if (hand.length > 1) discard.push(hand.shift());
-      console.log(`${caster.name} retrieved ${confessorCards.length} cards`);
-    }
-  } else if (card.character === 'Barbarian') {
-    if (card.name === 'Pursuit') {
-      let x = min(player1Mana, 5); // Simplified X value
-      caster.tempEffects.thisTurn = { movement: x };
-      caster.movementSpeed += x;
-      caster.life -= x;
-      console.log(`${caster.name} gained ${x} movement, lost ${x} life`);
-    } else if (card.name === 'Blood Shield') {
-      caster.tempEffects.thisTurn = { untouchable: true };
-      console.log(`${caster.name} is untouchable this turn`);
-    } else if (card.name === 'Whirlwind') {
-      let [cx, cy] = caster.position;
-      let targets = getAOETargets(cx, cy, enemies);
-      targets.forEach(t => applyDamage(t, caster.power, caster));
-      console.log(`${caster.name} hit ${targets.length} enemies with Whirlwind`);
-    } else if (card.name === 'Over Confident') {
-      let damaged = allChamps.filter(c => c.damageTakenThisTurn > 0).length;
-      let deck = currentPlayer === 1 ? player1Deck : player2Deck;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      hand.push(...deck.splice(0, damaged));
-      console.log(`${caster.name} drew ${damaged} cards`);
-    } else if (card.name === 'Fearless Strike') {
-      caster.hasAttacked = false;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      let discard = currentPlayer === 1 ? player1Discard : player2Discard;
-      if (hand.length > 1) discard.push(hand.shift());
-      console.log(`${caster.name} gained extra attack`);
-    } else if (card.name === 'Critical Strike') {
-      caster.tempEffects.thisTurn = { critical: true };
-      console.log(`${caster.name} next attack may deal double damage`);
-    } else if (card.name === 'Refuel') {
-      caster.tempEffects.thisTurn = { refuel: true };
-      console.log(`${caster.name} will heal at turn end`);
-    } else if (card.name === 'Head Smash' && target) {
-      let adj = findAdjacentEmpty(target.position);
-      if (adj) {
-        caster.position = adj;
-        applyDamage(target, 3, caster);
-        console.log(`${caster.name} head smashed ${target.name}`);
-      }
-    } else if (card.name === 'Dodge') { // Response: handled in applyDamage
-    } else if (card.name === 'Cheat Death') {
-      caster.tempEffects.thisTurn = { cheatDeath: true };
-      console.log(`${caster.name} cannot die this turn`);
-    } else if (card.name === 'Hamstrung' && target) {
-      target.tempEffects.untilNextTurn = { canMove: false };
-      console.log(`${caster.name} hamstrung ${target.name}`);
-    }
-  } else if (card.character === 'Burglar') {
-    if (card.name === 'Pick Pocket') {
-      let oppMana = currentPlayer === 1 ? player2Mana : player1Mana;
-      if (oppMana > 0) {
-        oppMana--;
-        player1Mana += currentPlayer === 1 ? 1 : 0;
-        player2Mana += currentPlayer === 2 ? 1 : 0;
-        console.log(`${caster.name} stole 1 mana`);
-      }
-    } else if (card.name === 'Quick Advantage') {
-      caster.tempEffects.thisTurn = { unlimitedMovement: true };
-      caster.hasAttacked = true;
-      console.log(`${caster.name} gained unlimited movement`);
-    } else if (card.name === 'Surprise Attack') {
-      let moves = getValidMoves(caster);
-      if (moves.length > 0) caster.position = moves[0];
-      caster.hasAttacked = false;
-      console.log(`${caster.name} surprise attacked`);
-    } else if (card.name === 'Distract' && target) {
-      let los = getLOSPositions(caster);
-      let newPos = los.find(([x, y]) => !isOccupied(x, y) && gameBoard[y][x] === 'empty');
-      if (newPos) target.position = newPos;
-      console.log(`${caster.name} distracted ${target.name}`);
-    } else if (card.name === 'Blinded' && target) {
-      if (random([true, false])) {
-        target.tempEffects.untilNextTurn = { canAttack: false };
-        console.log(`${caster.name} blinded ${target.name}`);
-      }
-    } else if (card.name === 'Vanish') { // Response: handled in applyDamage
-    } else if (card.name === 'Quick Hit' && target) {
-      applyDamage(target, 3, caster);
-      if (random([true, false])) {
-        let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-        hand.push(card);
-      }
-      console.log(`${caster.name} quick hit ${target.name}`);
-    } else if (card.name === 'Safe House') {
-      if (!enemies.some(e => isInRange(e, caster))) {
-        caster.life = min(caster.life + 6, 20);
-        console.log(`${caster.name} healed 6 in Safe House`);
-      }
-    } else if (card.name === 'Jackpot') {
-      player1Mana += currentPlayer === 1 ? 3 : 0;
-      player2Mana += currentPlayer === 2 ? 3 : 0;
-      console.log(`${caster.name} gained 3 mana`);
-    } else if (card.name === 'Breaking and Entering') {
-      allChamps.forEach(c => {
-        if (c.equipped) {
-          let discard = c === player1Champions.includes(c) ? player1Discard : player2Discard;
-          discard.push(c.equipped);
-          c.equipped = null;
+    } else if (card.name === 'Smoke Bomb') {
+      friendlies.forEach(c => {
+        let moves = getValidMoves(c);
+        if (moves.length > 0) {
+          c.position = moves[0];
+          console.log(`${c.name} repositioned with Smoke Bomb to ${c.position}`);
         }
       });
-      shuffleArray(player1Discard);
-      shuffleArray(player2Discard);
-      player1Deck.push(...player1Discard);
-      player2Deck.push(...player2Discard);
-      player1Discard = [];
-      player2Discard = [];
-      console.log(`${caster.name} broke and entered`);
-    } else if (card.name === 'From the Shadows') {
-      enemies.filter(e => isInRange(caster, e)).forEach(e => applyDamage(e, 3, caster));
-      console.log(`${caster.name} struck from the shadows`);
-    } else if (card.name === 'Disguise' && target) {
-      caster.power = target.power;
-      caster.range = target.range;
-      caster.movementSpeed = target.movementSpeed;
-      let oppDiscard = currentPlayer === 1 ? player2Discard : player1Discard;
-      let toCast = oppDiscard.find(c => c.character === target.name);
-      if (toCast) {
-        castCard(toCast, caster);
-        oppDiscard.splice(oppDiscard.indexOf(toCast), 1);
-      }
-      console.log(`${caster.name} disguised as ${target.name}`);
-    }
-  } else if (card.character === 'Berserker') {
-    if (card.name === 'Enrage') {
-      caster.tempEffects.thisTurn = { power: 2 };
-      caster.power += 2;
-      caster.life -= 3;
-      console.log(`${caster.name} enraged`);
-    } else if (card.name === 'Agility') {
-      caster.tempEffects.thisTurn = { agility: true };
-      console.log(`${caster.name} gained agility`);
-    } else if (card.name === 'Commanding Shout' && target) {
-      target.tempEffects.untilNextTurn = { canAttack: false };
-      caster.life--;
-      console.log(`${caster.name} shouted at ${target.name}`);
-    } else if (card.name === 'Bloodthirsty') { // Response: handled in healing
-    } else if (card.name === 'Second Wind') {
-      if (caster.damageTakenThisTurn > 4) {
-        caster.life = min(caster.life + caster.damageTakenThisTurn, 20);
-        console.log(`${caster.name} healed ${caster.damageTakenThisTurn}`);
-      }
-    } else if (card.name === 'Throwing Axe' && target) {
-      caster.tempEffects.thisTurn = { power: -3, range: 3 };
-      caster.power -= 3;
-      caster.range += 3;
-      target.tempEffects.untilNextTurn = { canMove: false };
-      caster.hasAttacked = true;
-      console.log(`${caster.name} threw axe at ${target.name}`);
-    } else if (card.name === 'Dual Wield') {
-      if (random([true, false])) caster.hasAttacked = false;
-      console.log(`${caster.name} dual wielded`);
-    } else if (card.name === 'Last Stand' && target) {
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      let damage = hand.length === 1 ? 4 : 2;
-      applyDamage(target, damage, caster);
-      console.log(`${caster.name} last stood against ${target.name}`);
-    } else if (card.name === 'Spell Punish') { // Response: handled in applyDamage
-    } else if (card.name === 'Battlecry') {
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      let discard = currentPlayer === 1 ? player1Discard : player2Discard;
-      let count = hand.length - 1;
-      discard.push(...hand.splice(0, count));
-      for (let i = 0; i < count; i++) {
-        let roll = Math.floor(Math.random() * 6) + 1;
-        let stat = roll <= 2 ? 'range' : roll <= 4 ? 'power' : 'movementSpeed';
-        caster.tempEffects.thisTurn = { ...caster.tempEffects.thisTurn, [stat]: (caster.tempEffects.thisTurn[stat] || 0) + 1 };
-        caster[stat]++;
-      }
-      console.log(`${caster.name} battlecried, discarded ${count} cards`);
-    } else if (card.name === 'Mutually Assured Destruction' && target) {
-      applyDamage(target, 5, caster);
-      applyDamage(caster, 5, caster);
-      caster.tempEffects.noHeal = true;
-      console.log(`${caster.name} mutually destroyed ${target.name}`);
-    }
-  } else if (card.character === 'Shaman') {
-    if (card.name === 'Cloud Shift') {
-      let discard = currentPlayer === 1 ? player1Discard : player2Discard;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      let options = discard.filter(c => c.character === 'Shaman' && c.cost <= 1);
-      if (options.length > 0) {
-        let cardToRetrieve = options[Math.floor(Math.random() * options.length)];
-        hand.push(cardToRetrieve);
-        discard.splice(discard.indexOf(cardToRetrieve), 1);
-        console.log(`${caster.name} shifted ${cardToRetrieve.name}`);
-      }
-    } else if (card.name === 'Lightning Strike' && target) {
-      applyDamage(target, 2, caster);
-      console.log(`${caster.name} struck ${target.name}`);
-    } else if (card.name === 'Spirit Link' && target) {
-      let secondTarget = friendlies.find(c => c !== target && c.position);
-      if (secondTarget) {
-        let transfer = min(5, target.life - 1);
-        target.life -= transfer;
-        secondTarget.life = min(secondTarget.life + transfer, 20);
-        console.log(`${caster.name} linked ${target.name} to ${secondTarget.name}`);
-      }
-    } else if (card.name === 'Revitalize') {
-      let deck = currentPlayer === 1 ? player1Deck : player2Deck;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      hand.push(...deck.splice(0, 2));
-      console.log(`${caster.name} revitalized`);
-    } else if (card.name === 'Vortex Shield' && target) {
-      target.tempEffects.untilNextTurn = { immune: true };
-      console.log(`${caster.name} shielded ${target.name}`);
-    } else if (card.name === 'Elemental Storm' && target) {
-      let [tx, ty] = target;
-      let hits = getAOETargets(tx, ty);
-      hits.forEach(h => applyDamage(h, caster.power, caster));
-      console.log(`${caster.name} stormed ${hits.length} champions`);
-    } else if (card.name === 'Healing Rain' && target) {
-      let [tx, ty] = target;
-      let hits = getAOETargets(tx, ty);
-      hits.forEach(h => h.life = min(h.life + 3, 20));
-      console.log(`${caster.name} healed ${hits.length} champions`);
-    } else if (card.name === 'Thunderous Wrath') {
-      let enemy = enemies[Math.floor(Math.random() * enemies.length)];
-      if (enemy.position) applyDamage(enemy, 3, caster);
-      console.log(`${caster.name} wrath hit ${enemy.name}`);
-    } else if (card.name === 'Static Shock') {
-      let targets = allChamps.filter(c => isInRange(caster, c));
-      targets.forEach(t => applyDamage(t, random([1, 2]), caster));
-      console.log(`${caster.name} shocked ${targets.length} champions`);
-    } else if (card.name === 'Super Charged' && target) {
-      target.tempEffects.thisTurn = { unlimitedRange: true, unlimitedMovement: true };
-      console.log(`${caster.name} super charged ${target.name}`);
-    } else if (card.name === 'Elemental Fury') {
-      let deck = currentPlayer === 1 ? player1Deck : player2Deck;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      let discard = currentPlayer === 1 ? player1Discard : player2Discard;
-      discard.push(...hand.splice(0, hand.length - 1));
-      let options = deck.filter(c => c.cost <= 1).slice(0, 3);
-      hand.push(...options);
-      options.forEach(c => deck.splice(deck.indexOf(c), 1));
-      caster.hasAttacked = true;
-      console.log(`${caster.name} unleashed fury`);
-    }
-  } else if (card.character === 'Illusionist') {
-    if (card.name === 'Pick a Card…') {
-      let discard = currentPlayer === 1 ? player1Discard : player2Discard;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      if (discard.length > 0) {
-        let cardToRetrieve = discard[Math.floor(Math.random() * discard.length)];
-        hand.push(cardToRetrieve);
-        discard.splice(discard.indexOf(cardToRetrieve), 1);
-        console.log(`${caster.name} picked ${cardToRetrieve.name}`);
-      }
-    } else if (card.name === 'Now You See Me') { // Response: handled in applyDamage
-    } else if (card.name === 'Intel') {
-      let deck = currentPlayer === 1 ? player1Deck : player2Deck;
-      let oppDeck = currentPlayer === 1 ? player2Deck : player1Deck;
-      if (deck.length > 0) console.log(`Top of P${currentPlayer} deck: ${deck[0].name}`);
-      if (oppDeck.length > 0) console.log(`Top of P${currentPlayer === 1 ? 2 : 1} deck: ${oppDeck[0].name}`);
-      // Simplified: no top/bottom choice
-    } else if (card.name === 'Gamble') {
-      let manaGain = 0;
-      while (random([true, false])) {
-        manaGain++;
-        player1Mana += currentPlayer === 1 ? 1 : 0;
-        player2Mana += currentPlayer === 2 ? 1 : 0;
-      }
-      console.log(`${caster.name} gambled and gained ${manaGain} mana`);
-    } else if (card.name === 'Guess Again') {
-      let x = min(player1Mana, 5); // Simplified X
-      enemies.forEach(c => c.tempEffects.untilNextTurn = { maxCastCost: x });
-      console.log(`${caster.name} limited casting to ${x} or less`);
-    } else if (card.name === 'Reshuffle') {
-      let x = min(player1Mana, 5); // Simplified X
-      let deck = currentPlayer === 1 ? player1Deck : player2Deck;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      hand.push(...deck.splice(0, x));
-      console.log(`${caster.name} drew ${x} cards`);
-    } else if (card.name === 'Confuse') { // Response: not fully implemented
-    } else if (card.name === 'Grand Finale') {
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      caster.tempEffects.thisTurn = { power: hand.length };
-      caster.power = hand.length;
-      console.log(`${caster.name} power set to ${hand.length}`);
-    } else if (card.name === 'House Odds') {
-      let roll = Math.floor(Math.random() * 11) + 2;
-      if (roll <= 4) {
-        applyDamage(caster, 4, caster);
-      } else if (roll <= 10) {
-        let enemy = enemies[Math.floor(Math.random() * enemies.length)];
-        if (enemy.position) applyDamage(enemy, 4, caster);
-      } else {
-        enemies.forEach(e => applyDamage(e, 4, caster));
-      }
-      console.log(`${caster.name} rolled ${roll}`);
-    } else if (card.name === 'Unlimited Chances') { // Response: handled in applyDamage
-    }
-  } else if (card.character === 'DarkWizard') {
-    if (card.name === 'Lifetap') {
-      let deck = currentPlayer === 1 ? player1Deck : player2Deck;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      if (deck.length > 0) hand.push(deck.shift());
-      caster.life--;
-      console.log(`${caster.name} lifetapped`);
-    } else if (card.name === 'Pit of Despair') { // Response: handled in movement
-    } else if (card.name === 'Mana Burn') {
-      let x = min(player1Mana, 5); // Simplified X
-      let oppMana = currentPlayer === 1 ? player2Mana : player1Mana;
-      oppMana = max(0, oppMana - x);
-      console.log(`${caster.name} burned ${x} opponent mana`);
-    } else if (card.name === 'Black Hole' && target) {
-      let [tx, ty] = target;
-      let hits = getAOETargets(tx, ty);
-      let totalDamage = hits.length;
-      hits.forEach(h => applyDamage(h, 1, caster));
-      caster.life = min(caster.life + totalDamage, 20);
-      console.log(`${caster.name} black holed ${totalDamage} damage`);
-    } else if (card.name === 'No Pain, No Gain') {
-      caster.life -= 2;
-      caster.hasAttacked = false;
-      console.log(`${caster.name} gained extra attack`);
-    } else if (card.name === 'Hypnotize' && target) {
-      target.tempEffects.untilNextTurn = { immune: true, hypnotized: true };
-      console.log(`${caster.name} hypnotized ${target.name}`);
-    } else if (card.name === 'Shadow Bolt' && target) {
-      applyDamage(target, caster.power, caster);
-      console.log(`${caster.name} shadow bolted ${target.name}`);
-    } else if (card.name === 'Underworld Terror') {
-      enemies.forEach(c => c.tempEffects.untilNextTurn = { powerLocked: true });
-      console.log(`${caster.name} terrorized enemies`);
-    } else if (card.name === 'Evil Tricks') {
-      // Simplified: deal 2 damage to random enemy
-      let enemy = enemies[Math.floor(Math.random() * enemies.length)];
-      if (enemy.position) applyDamage(enemy, 2, caster);
-      console.log(`${caster.name} used evil tricks`);
-    } else if (card.name === 'Life Force') {
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      let discard = currentPlayer === 1 ? player1Discard : player2Discard;
-      let count = hand.length - 1;
-      discard.push(...hand.splice(0, count));
-      caster.life = min(caster.life + count * 2, 20);
-      console.log(`${caster.name} restored ${count * 2} life`);
-    } else if (card.name === 'Telekinesis') {
-      let discard = currentPlayer === 1 ? player1Discard : player2Discard;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      let options = discard.filter(c => c.cost <= 3).slice(0, 3);
-      hand.push(...options);
-      options.forEach(c => discard.splice(discard.indexOf(c), 1));
-      console.log(`${caster.name} telekinesised ${options.length} cards`);
-    } else if (card.name === 'Shadow Burst' && target) {
-      let discard = currentPlayer === 1 ? player1Discard : player2Discard;
-      let deck = currentPlayer === 1 ? player1Deck : player2Deck;
-      applyDamage(target, discard.length, caster);
-      deck.push(...discard);
-      shuffleArray(deck);
-      discard.length = 0;
-      console.log(`${caster.name} burst ${target.name} for ${discard.length}`);
-    }
-  } else if (card.character === 'Alchemist') {
-    if (card.name === 'Stealth Flask' && target) {
-      target.tempEffects.untilNextTurn = { stealth: true };
-      console.log(`${caster.name} stealthed ${target.name}`);
-    } else if (card.name === 'Agility Flask' && target) {
-      let boost = caster.equipped && caster.equipped.name === 'Dragon’s Tail' ? 1 : 0;
-      target.tempEffects.thisTurn = { range: 2 + boost, movement: 2 + boost };
-      target.range += 2 + boost;
-      target.movementSpeed += 2 + boost;
-      console.log(`${caster.name} boosted ${target.name} agility`);
-    } else if (card.name === 'Might Flask' && target) {
-      let boost = caster.equipped && caster.equipped.name === 'Dragon’s Tail' ? 1 : 0;
-      target.tempEffects.thisTurn = { power: 2 + boost };
-      target.power += 2 + boost;
-      console.log(`${caster.name} boosted ${target.name} might`);
-    } else if (card.name === 'Rejuvenation Flask' && target) {
-      target.life = min(target.life + 4, 20);
-      console.log(`${caster.name} rejuvenated ${target.name}`);
-    } else if (card.name === 'Superior Flask' && target) {
-      let boost = caster.equipped && caster.equipped.name === 'Dragon’s Tail' ? 1 : 0;
-      target.tempEffects.thisTurn = { power: 1 + boost, range: 1 + boost, movement: 1 + boost };
-      target.power += 1 + boost;
-      target.range += 1 + boost;
-      target.movementSpeed += 1 + boost;
-      console.log(`${caster.name} superior boosted ${target.name}`);
-    } else if (card.name === 'Acid Bomb' && target) {
-      let [tx, ty] = target;
-      let hits = getAOETargets(tx, ty);
-      hits.forEach(h => applyDamage(h, 2, caster));
-      console.log(`${caster.name} acid bombed ${hits.length} champions`);
-    } else if (card.name === 'Smoke Bomb') { // Response: handled in applyDamage
-    } else if (card.name === 'Preparation') {
-      let discard = currentPlayer === 1 ? player1Discard : player2Discard;
-      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
-      let flasks = discard.filter(c => c.name.includes('Flask')).slice(0, 2);
-      hand.push(...flasks);
-      flasks.forEach(c => discard.splice(discard.indexOf(c), 1));
-      console.log(`${caster.name} prepared ${flasks.length} flasks`);
-    } else if (card.name === 'Spectre’s Essence') {
-      caster.tempEffects.thisTurn = { spectreEssence: true };
-      console.log(`${caster.name} activated Spectre’s Essence`);
-    } else if (card.name === 'Time Warp Flask') {
-      let allDiscard = player1Discard.concat(player2Discard);
-      shuffleArray(allDiscard);
-      player1Deck.push(...allDiscard.filter(c => player1Characters.includes(c.character)));
-      player2Deck.push(...allDiscard.filter(c => player2Characters.includes(c.character)));
-      player1Discard = [];
-      player2Discard = [];
-      player1Cards = player1Deck.splice(0, 5);
-      player2Cards = player2Deck.splice(0, 5);
-      console.log(`${caster.name} warped time`);
+    } else if (card.name === 'Pit of Despair' && responseState.trigger === 'move') {
+      let mover = responseState.data.mover;
+      gameBoard[mover.position[1]][mover.position[0]] = 'pit';
+      console.log(`Pit of Despair created at ${mover.position}`);
+    } else if (card.name === 'Bear Trap' && responseState.trigger === 'move') {
+      let mover = responseState.data.mover;
+      applyDamage(mover, 2, caster);
+      mover.tempEffects.thisTurn = mover.tempEffects.thisTurn || {};
+      mover.tempEffects.thisTurn.movement = -mover.movementSpeed;
+      mover.movementSpeed = 0;
+      console.log(`${mover.name} caught in Bear Trap, 2 damage, movement set to 0`);
+    } else if (card.name === 'Natures Wrath' && responseState.trigger === 'endTurn' && responseState.data.beast.damageTakenThisTurn > 0) {
+      let beast = responseState.data.beast;
+      enemies.forEach(e => applyDamage(e, 2, beast));
+      console.log(`Nature's Wrath dealt 2 damage to all enemies from ${beast.name}`);
     }
   }
+
+  // Apply effects
+  card.effect.forEach(e => {
+    console.log(`Applying effect: ${e.type}, value: ${e.value}, scope: ${e.scope}`);
+    if (e.type === "damage") {
+      if (e.scope === "randomEnemy") {
+        let enemy = enemies[Math.floor(Math.random() * enemies.length)];
+        if (enemy && enemy.position) {
+          console.log(`Random enemy ${enemy.name} takes ${e.value} damage`);
+          applyDamage(enemy, e.value, caster);
+        }
+      } else {
+        targets.forEach(t => {
+          console.log(`${t.name} takes ${e.value} damage`);
+          applyDamage(t, e.value, caster);
+          console.log(`${t.name} life after: ${t.life}`);
+        });
+      }
+    } else if (e.type === "heal") {
+      targets.forEach(t => {
+        t.life = min(t.life + e.value, 20);
+        console.log(`${t.name} healed for ${e.value}, life now: ${t.life}`);
+      });
+    } else if (e.type === "statMod") {
+      targets.forEach(t => {
+        t.tempEffects[e.duration] = t.tempEffects[e.duration] || {};
+        t.tempEffects[e.duration][e.stat] = e.value;
+        t[e.stat] += e.value;
+        console.log(`${t.name} ${e.stat} modified by ${e.value} for ${e.duration}`);
+      });
+    } else if (e.type === "buff" || e.type === "debuff") {
+      targets.forEach(t => {
+        t.tempEffects[e.duration] = t.tempEffects[e.duration] || {};
+        t.tempEffects[e.duration][e.name] = e.value;
+        console.log(`${t.name} received ${e.type} ${e.name} with value ${e.value} for ${e.duration}`);
+        if (e.name === "extraMove" && e.value === true) {
+          t.maxMoves = 2;
+          t.moveCount = 0;
+          console.log(`${t.name} gained an extra move (maxMoves: ${t.maxMoves})`);
+        }
+        if (e.name === "extraAttack" && e.value === true) {
+          t.maxAttacks = 2;
+          t.attackCount = 0;
+          console.log(`${t.name} gained an extra attack (maxAttacks: ${t.maxAttacks})`);
+        }
+      });
+    } else if (e.type === "draw") {
+      let deck = currentPlayer === 1 ? player1Deck : player2Deck;
+      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
+      let drawn = deck.splice(0, e.value);
+      hand.push(...drawn);
+      console.log(`Drew ${drawn.length} cards: ${drawn.map(c => c.name).join(', ')}`);
+    } else if (e.type === "discard") {
+      let hand = currentPlayer === 1 ? player1Cards : player2Cards;
+      let discard = currentPlayer === 1 ? player1Discard : player2Discard;
+      let discarded = hand.splice(0, e.value);
+      discard.push(...discarded);
+      console.log(`Discarded ${discarded.length} cards: ${discarded.map(c => c.name).join(', ')}`);
+    } else if (e.type === "move") {
+      if (e.value === "unlimited") {
+        caster.tempEffects.thisTurn = caster.tempEffects.thisTurn || {};
+        caster.tempEffects.thisTurn.unlimitedMovement = true;
+        console.log(`${caster.name} gained unlimited movement this turn`);
+      } else if (targets.length) {
+        targets[0].position = e.position || getValidMoves(targets[0])[0];
+        console.log(`${targets[0].name} moved to ${targets[0].position}`);
+      }
+    }
+  });
+
+  // Handle equipment
+  if (card.type === "Equipment") {
+    caster.equipped = card;
+    if (card.charges) caster.equipped.charges = card.charges;
+    console.log(`${caster.name} equipped ${card.name}${card.charges ? ` with ${card.charges} charges` : ''}`);
+  }
+}
+
+// Helper to get targets in a direction
+function getTargetsInDirection(caster, [dx, dy], range) {
+  let [cx, cy] = caster.position;
+  let targets = [];
+  let maxRange = range === "LOS" ? gridSize : range;
+  for (let i = 1; i <= maxRange; i++) {
+    let tx = cx + dx * i;
+    let ty = cy + dy * i;
+    if (tx < 0 || tx >= gridSize || ty < 0 || ty >= gridSize || gameBoard[ty][tx] === "wall") break;
+    let champ = player1Champions.concat(player2Champions).find(c => c.position && c.position[0] === tx && c.position[1] === ty);
+    if (champ) targets.push(champ);
+  }
+  return targets;
 }
 
 // Helper Functions for Card Mechanics
 function applyDamage(target, amount, source) {
   target.damageTakenThisTurn = (target.damageTakenThisTurn || 0) + amount;
   let actualDamage = amount;
+  console.log(`applyDamage called for ${target.name} with ${amount} from ${source ? source.name : 'unknown'}`);
 
-  // Check responses
-  let responses = (currentPlayer === 1 ? player2Cards : player1Cards).filter(c => c.type === 'Response');
+  // Response checks (only modify damage or recurse, no movement)
   let opponentPlayer = currentPlayer === 1 ? 2 : 1;
+  let responses = (opponentPlayer === 1 ? player1Cards : player2Cards).filter(c => c.type === 'Response');
   for (let card of responses) {
     if (target.tempEffects.damageReduction) {
       actualDamage = 1;
@@ -2394,35 +1906,11 @@ function applyDamage(target, amount, source) {
     } else if (card.name === 'Oblivious' && target.name === 'Brute') {
       actualDamage = 1;
       break;
-    } else if (card.name === 'Quick Instincts' && target.name === 'Beast') {
-      target.tempEffects.thisTurn = { movement: 2 };
-      target.movementSpeed += 2;
-      let moves = getValidMoves(target);
-      if (moves.length > 0) target.position = moves[0];
-    } else if (card.name === 'Bear Tank' && source.name !== 'Beast') {
-      let beast = friendlies.find(c => c.name === 'Beast');
-      if (beast && isInLOS(beast, target)) {
-        let adj = findAdjacentEmpty(target.position);
-        if (adj) {
-          beast.position = adj;
-          beast.life -= 1;
-          actualDamage = 0;
-          break;
-        }
-      }
     } else if (card.name === 'Power Shield' && target.tempEffects.shield) {
       actualDamage = max(0, actualDamage - 2);
       delete target.tempEffects.shield;
     } else if (card.name === 'Self-Hate' && target.name === 'Confessor') {
       applyDamage(source, amount, target);
-      actualDamage = 0;
-      break;
-    } else if (card.name === 'Dodge' && target.name === 'Barbarian') {
-      let moves = getValidMoves(target);
-      if (moves.length > 0) target.position = moves[0];
-    } else if (card.name === 'Vanish' && target.name === 'Burglar') {
-      let safePos = findSafePosition(target);
-      if (safePos) target.position = safePos;
       actualDamage = 0;
       break;
     } else if (card.name === 'Now You See Me' && target.name === 'Illusionist' && random([true, false])) {
@@ -2431,42 +1919,43 @@ function applyDamage(target, amount, source) {
       actualDamage = 0;
       let hand = opponentPlayer === 1 ? player1Cards : player2Cards;
       hand.push(card);
-    } else if (card.name === 'Spell Punish' && target.name === 'Berserker' && source !== target) {
-      let adj = findAdjacentEmpty(source.position);
-      if (adj) target.position = adj;
-    } else if (card.name === 'Smoke Bomb') {
-      friendlies.forEach(c => {
-        let moves = getValidMoves(c);
-        if (moves.length > 0) c.position = moves[0];
-      });
     }
   }
 
+  // Apply temp effects adjustments
   if (target.tempEffects.damageReduction) actualDamage = 1;
   if (target.tempEffects.stealth && !targetingPosition) actualDamage = 0;
-  if (target.tempEffects.cheatDeath && target.life - actualDamage < 1) target.life = 1;
-  else target.life = max(0, target.life - actualDamage);
+  if (target.tempEffects.cheatDeath && target.life - actualDamage < 1) {
+    target.life = 1;
+    return;
+  }
 
-  if (target.tempEffects.leech && source.tempEffects.leech) {
-    source.life = min(source.life + 1, 20);
+  // Side effects from source
+  if (source) {
+    if (source.tempEffects.leech) source.life = min(source.life + 1, 20);
+    if (source.tempEffects.critical && random([true, false])) actualDamage *= 2;
+    if (source.tempEffects.elkRestoration) {
+      let friendlies = currentPlayer === 1 ? player1Champions : player2Champions;
+      friendlies.forEach(c => c.life = min(c.life + 2, 20));
+    }
+    if (source.tempEffects.apeSmash) {
+      let enemies = currentPlayer === 1 ? player2Champions : player1Champions;
+      enemies.filter(e => e !== target && isInRange(source, e)).forEach(e => applyDamage(e, 1, source));
+    }
+    if (target.equipped && target.equipped.name === 'Intimidation' && target.equipped.charges > 0) {
+      applyDamage(source, actualDamage, target);
+      target.equipped.charges--;
+      if (target.equipped.charges === 0) target.equipped = null;
+    }
+    if (source.tempEffects.spectreEssence && random([true, false])) {
+      let enemies = currentPlayer === 1 ? player2Champions : player1Champions;
+      enemies.forEach(e => applyDamage(e, 1, source));
+    }
   }
-  if (source.tempEffects.critical && random([true, false])) {
-    target.life = max(0, target.life - actualDamage);
-  }
-  if (source.tempEffects.elkRestoration) {
-    friendlies.forEach(c => c.life = min(c.life + 2, 20));
-  }
-  if (source.tempEffects.apeSmash) {
-    enemies.filter(e => e !== target && isInRange(source, e)).forEach(e => applyDamage(e, 1, source));
-  }
-  if (target.equipped && target.equipped.name === 'Intimidation' && target.equipped.charges > 0) {
-    applyDamage(source, actualDamage, target);
-    target.equipped.charges--;
-    if (target.equipped.charges === 0) target.equipped = null;
-  }
-  if (source.tempEffects.spectreEssence && random([true, false])) {
-    enemies.forEach(e => applyDamage(e, 1, source));
-  }
+
+  // Finally apply the damage
+  target.life = max(0, target.life - actualDamage);
+  console.log(`Applied ${actualDamage} damage to ${target.name}. Life now: ${target.life}`);
 
   checkResponseTriggers('damage', opponentPlayer, { target, amount: actualDamage, source });
 }
@@ -2603,18 +2092,22 @@ function findSafePosition(champ) {
 // Champion class definition
 class Champion {
   constructor(name, position, movementSpeed, power, range, life) {
-    this.name = name; // Champion name
-    this.position = position; // [x, y] grid position
-    this.movementSpeed = movementSpeed; // Max move distance
-    this.power = power; // Attack damage
-    this.range = range; // Attack range
-    this.life = life; // Current health
-    this.hasMoved = false; // Turn movement flag
-    this.hasAttacked = false; // Turn attack flag
-    this.hasCast = false; // Turn cast flag (unused currently)
-    this.equipped = null; // Currently equipped equipment card
-    this.tempEffects = {}; // Temporary buffs/debuffs
-    this.damageTakenThisTurn = 0; // Track damage for cards like Second Wind
+    this.name = name;
+    this.position = position;
+    this.movementSpeed = movementSpeed;
+    this.power = power;
+    this.range = range;
+    this.life = life;
+    this.hasMoved = false; // For UI/selection
+    this.moveCount = 0; // Tracks moves taken
+    this.maxMoves = 1; // Default max moves
+    this.hasAttacked = false; // For UI/selection
+    this.attackCount = 0; // Tracks attacks taken
+    this.maxAttacks = 1; // Default max attacks
+    this.hasCast = false;
+    this.equipped = null;
+    this.tempEffects = {};
+    this.damageTakenThisTurn = 0;
   }
 }
 
